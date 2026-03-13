@@ -10,19 +10,34 @@ use Illuminate\Support\Facades\Log;
 class BookingController extends Controller
 {
     // список бронирований
-    public function index()
+    public function index(Request $request)
     {
         $user = Auth::user();
 
-        // админ видит всё
-        if ($user->role === 'admin') {
-            return Booking::with(['user', 'room', 'status'])->get();
+        $query = Booking::with(['user', 'room', 'status']);
+
+        // обычный пользователь видит только свои бронирования
+        if ($user->role !== 'admin') {
+            $query->where('user_id', $user->id);
         }
 
-        // пользователь только свои
-        return Booking::with(['room', 'status'])
-            ->where('user_id', $user->id)
-            ->get();
+        // фильтр по комнате
+        if ($request->room_id) {
+            $query->where('room_id', $request->room_id);
+        }
+
+        // фильтр по статусу
+        if ($request->status_id) {
+            $query->where('status_id', $request->status_id);
+        }
+
+        // сортировка
+        $sortBy = $request->get('sort_by', 'start_time');
+        $sortOrder = $request->get('sort_order', 'asc');
+
+        $query->orderBy($sortBy, $sortOrder);
+
+        return $query->paginate($request->get('per_page', 10));
     }
 
     // создание бронирования
