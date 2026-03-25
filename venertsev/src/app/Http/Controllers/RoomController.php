@@ -9,11 +9,36 @@ use App\Models\Review;
 
 class RoomController extends Controller
 {
-    public function index()
+    // список комнат (с фильтрацией + пагинацией)
+    public function index(Request $request)
     {
-        return Room::all();
+        $query = Room::query();
+
+        // фильтр по вместимости
+        if ($request->capacity) {
+            $query->where('capacity', '>=', $request->capacity);
+        }
+
+        // поиск по названию
+        if ($request->search) {
+            $query->where('name', 'like', '%' . $request->search . '%');
+        }
+
+        // сортировка
+        $allowedSorts = ['capacity', 'name', 'created_at'];
+        $sortBy = in_array($request->get('sort_by'), $allowedSorts)
+            ? $request->get('sort_by')
+            : 'created_at';
+
+        $sortOrder = $request->get('sort_order') === 'desc' ? 'desc' : 'asc';
+
+        $query->orderBy($sortBy, $sortOrder);
+
+        return $query->paginate($request->get('per_page', 10));
     }
 
+
+    // создание
     public function store(Request $request)
     {
         $validated = $request->validate([
@@ -25,11 +50,15 @@ class RoomController extends Controller
         return Room::create($validated);
     }
 
+
+    // просмотр
     public function show(Room $room)
     {
         return $room;
     }
 
+
+    // обновление
     public function update(Request $request, Room $room)
     {
         $validated = $request->validate([
@@ -39,45 +68,72 @@ class RoomController extends Controller
         ]);
 
         $room->update($validated);
+
         return $room;
     }
 
+
+    // удаление
     public function destroy(Room $room)
     {
         $room->delete();
-        return response()->noContent();
+
+        return response()->json([
+            'message' => 'Room deleted'
+        ]);
     }
 
-    public function schedule($id)
+
+    // 📅 расписание комнаты
+    public function schedule(Request $request, $id)
     {
         $room = Room::findOrFail($id);
 
-        $bookings = Booking::where('room_id', $id)
-            ->orderBy('start_time')
-            ->get();
+        $query = Booking::where('room_id', $id)
+            ->orderBy('start_time');
+
+        // фильтр по дате
+        if ($request->date) {
+            $query->whereDate('start_time', $request->date);
+        }
 
         return response()->json([
             'room' => $room,
-            'schedule' => $bookings
+            'schedule' => $query->get()
         ]);
     }
+
+
+    // 🔍 поиск свободных комнат (УЛУЧШЕННЫЙ)
     public function available(Request $request)
     {
-        $start = $request->start_time;
-        $end = $request->end_time;
-        $capacity = $request->capacity;
+        $validated = $request->validate([
+            'start_time' => 'required|date',
+            'end_time' => 'required|date|after:start_time',
+            'capacity' => 'nullable|integer|min:1'
+        ]);
+
+        $start = $validated['start_time'];
+        $end = $validated['end_time'];
+        $capacity = $validated['capacity'] ?? 0;
 
         $rooms = Room::where('capacity', '>=', $capacity)
             ->whereDoesntHave('bookings', function ($query) use ($start, $end) {
+
+                // ПРАВИЛЬНАЯ проверка пересечения
                 $query->where(function ($q) use ($start, $end) {
-                    $q->whereBetween('start_time', [$start, $end])
-                    ->orWhereBetween('end_time', [$start, $end]);
+                    $q->where('start_time', '<', $end)
+                      ->where('end_time', '>', $start);
                 });
+
             })
             ->get();
 
         return response()->json($rooms);
     }
+
+
+    // ⭐ рейтинг комнаты
     public function rating($roomId)
     {
         $reviews = Review::where('room_id', $roomId)->get();
